@@ -1,0 +1,1323 @@
+---
+title: "Data_analysis_amphibian_habitat_use"
+author: "Julie Guenat"
+date: "09/02/2023"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+# R packages 
+
+```{r, include = T, message = FALSE, warning=FALSE}
+library(tidyverse)
+library(wesanderson)
+library(pscl)
+library(Matrix)
+library(lme4)
+library(DHARMa)
+library(bbmle) 
+library(stats)
+library(hrbrthemes)
+library(ggpubr)
+library(patchwork)
+library(FactoMineR)
+library(factoextra)
+library(ape)
+library(vegan)
+library(corrplot)
+library(ggordiplots)
+library(corrplot)
+library(jtools)
+library(colorspace)
+library(cowplot)
+library(ggrepel)
+library(ggsci)
+library(ggtext)
+library(ggthemes)
+library(grid)
+library(gridExtra)
+library(rcartocolor)
+library(scico)
+library(showtext)
+```
+
+# Raw reads data vizualisation 
+
+## Relative reads abundance per Class 
+
+First, I intended to visualize the number of raw reads obtained for each Class retrieved using BATR01 primers. To do so, I loaded the tabfile I obtained after processing fasta.files with OBITools processing steps and removing the 1st PCR replicate that was not included for sequencing.  
+
+```{r, message=FALSE, results='hide'}
+batr_raw<- read.table("C:/Users/jguenat/Documents/Paper_Master/2022_dataRaw_final/5_Raw_batr_WORep1.txt", header=T, sep="")
+
+batr_raw<-as_tibble(batr_raw)
+```
+
+I needed then to compute the real number of reads obtained in the different PCR replicated without the first one, since sequences were attributed to this replicate due to sequence leaking during sequencing process. 
+
+```{r, message=FALSE}
+#total read count PCR replicate 1 included
+Total_count<-sum(batr_raw$count)
+Total_count
+
+#Total read count without PCR replicate 1
+Total_count<-sum(batr_raw[,20:1075])
+Total_count
+
+#Create a new column with counts corresponding to the total count without rep1
+batr_raw<- batr_raw %>% mutate(count_real=rowSums(batr_raw[,20:1075]))
+```
+
+The taxonomic levels at which sequences were assigned using the database, were: Order, family, genus and species. Since the taxonomic level of my interest is the class, I first needed to regroup the data per order and count the number of reads per order. 
+
+```{R, message=F}
+#determine the number of sequences per order
+count_order<- batr_raw %>% group_by(order_name)%>%
+  summarise(sum(count_real))
+
+#I exported this output as a file to be able to modify it. 
+##write.table(count_order, "C:/Users/jguenat/Documents/Paper_Master/2022_dataRaw_final/pieChart/1_Raw_Batr_count_order.txt", row.names = F)
+
+```
+
+I attributed Class to each order using Excel by adding a column named "class". I then loaded this file and computed the total read count for each class. 
+
+```{R, message =F}
+batr_count_class<-read.table("C:/Users/jguenat/Documents/Paper_Master/2022_dataRaw_final/pieChart/2_Raw_Batr_count_class.txt", header=T, sep="\t")
+
+#count the number of sequences per Class and compute the sequences that it represents: 
+df<-batr_count_class %>% group_by(class)%>%
+  summarise(sum(sum.count_real.))%>%
+  mutate(rra=(`sum(sum.count_real.)`/sum(`sum(sum.count_real.)`))) %>% 
+  mutate(rra_fig=c("0.27","0.38","0.02","0.27","0.06","<0.02"))
+```
+
+### Barplot of RRA per class
+
+With ggplot2
+
+```{r, warning = F}
+cbPalette <- c("grey54", "indianred4",rep("grey54",4))
+
+barplot_class <- ggplot(df, aes(x=rra, y=reorder(factor(class, labels=c("Actinopterygii", "Amphibia", "Aves", "Homo sapiens", "Unidentified","Other Mammalia")), rra), fill=class)) +
+  geom_bar(stat="identity", width = 0.9) +
+  labs(x="RRA") +
+  geom_text(aes(label = rra_fig), vjust = 0.45, hjust=-0.30) + #vjust = vertical; hjust = horizontal
+  scale_fill_manual(values = cbPalette, name="")+
+  theme_ipsum_tw(grid="X") + 
+  xlim(c(0,0.5)) + 
+  theme(axis.text.x = element_text(size= 11, color= "black", vjust = -1),
+        axis.text.y = element_text(size= 11, color= "black"),
+        axis.title.x = element_text(size=12, vjust = -3, hjust = 0.5),
+        axis.title.y = element_blank(), 
+        legend.position = "none")
+
+barplot_class
+```
+
+## Relative reads abundance per focal species 
+
+Then, I needed to extract the real number of reads for the species of interest and compute their relative reads abundance
+
+```{R, message=FALSE}
+sp<-batr_raw %>% filter(best_identity.Batr_3m_final>0.98 & species_name %in% c("Bufo bufo", "Hyla arborea","Lissotriton vulgaris", "Rana temporaria", "Pelophylax ridibundus", "Pelophylax bergeri")) %>% mutate(rra=count_real/sum(count_real))
+```
+
+
+```{R, include=F}
+sp$rra
+
+sum(sp$rra)
+```
+
+Since this study was conducted in two different reserves and that we estimated the densities of each of the focal amphibian species per reserve, I was interested in computing the relative read abundance per species and per reserve.
+
+```{r, message=FALSE}
+#Yverdon Reserve
+yv <- sp %>% select(., contains(c("species_name", "pt1"))) %>% 
+  mutate(numreads_yv = rowSums(.[,c(2:342)])) %>%
+  mutate(rra = numreads_yv / sum(numreads_yv)) %>% 
+  mutate(reserve = "yv")
+```
+
+```{r, message=FALSE}
+#Gletterens Reserve
+gl <- sp %>% select(., contains(c("species_name","pt2"))) %>% 
+  mutate(numreads_gl = rowSums(.[,c(2:331)])) %>%
+  mutate(rra = numreads_gl / sum(numreads_gl))%>%
+  mutate(reserve="gle")
+```
+
+### Barplot of RRA per species and reserve
+
+I plotted the relative read abundance of focal species per reserve. 
+First, I needed to combine the rra from both reserve:
+
+```{r, message=FALSE}
+rra_sp<-bind_rows(gl, yv) %>%
+  select(-contains("pt"))
+
+View(rra_sp)
+```
+
+Then, do the barplot per species and reserves: 
+
+```{r, warning=F}
+colors_sp<-c("#5E7EBF", "#77B4C2", "#45BF92", "#F3D09D", "#F27405", "#F25041")
+colorsblind<-c("#88CCEE", "#CC6677", "#661100", "#DDCC77", "#999933", "#44AA99")
+palette1<-c("#C55157", "#BD974C", "#86C75F", "#91B3B8", "#9254B6", "#563B53")
+palette2<-c("#9E6969", "#BD974C", "#BFC66E", "#91B3B8", "#7373B5", "#563B53")
+palette3<-c("#676e32", "#575b9e", "#bfa767", "#4a3547", "#965e5e", "#70949b")
+palette4<-c("#965e5e", "#bfa767", "#676e32", "#70949b", "#575b9e", "#4a3547")
+
+barplot_sp<-ggplot(rra_sp, aes(y=rra, x= factor(reserve, labels = c("Gletterens", "Yverdon")), fill = factor(species_name, levels = c("Bufo bufo", "Hyla arborea", "Lissotriton vulgaris","Pelophylax bergeri", "Pelophylax ridibundus", "Rana temporaria")))) +
+  scale_fill_manual(values = palette2, "Species") +
+  geom_bar(stat = "identity", color = "black", width = 0.4)+
+  ylim(c(0,1)) + ylab("RRA")+ xlab("")+ 
+  geom_text(aes(label = round(rra,3)), hjust = -1)+
+  theme_ipsum_tw(grid="X") + 
+  theme(text= element_text(family ="A"), 
+        axis.text.x= element_text(size = 11, color ="black"),
+        axis.text.y = element_text(size=11, color="black"),
+        axis.title.y = element_text(size=12, hjust= 0.5, vjust = 5),
+        axis.title.x = element_blank(),
+        legend.position = "none")
+
+barplot_sp
+```
+
+
+## Relation between RRA and estimated densities 
+
+Then, we wanted to investigate the relationship between the densities of amphibians and the rra. 
+
+Since we cannot differentiate Pelophylax ridibundus from bergeri morphologically speaking and we need to compute the densities of individuals retrieved with the prenuptial migration survey, we pondered the number of Pelophylax sp. individuals by the rra. 
+
+```{r, message=FALSE}
+#yv ridi: rra= 0.048, berg: rra= 0.111, pelophylax sp. = 1
+
+nridiyv<- 1*(0.048/(0.048+0.111))
+nridiyv
+
+nbergyv<-1*(0.111/(0.111+0.048))
+nbergyv
+
+#gle ridi: rra= 0.031, berg.= 0.139, pelophylax sp. = 2
+
+nridigle<-2*(0.031/(0.031+0.139))
+nridigle
+
+nberggle<-2*(0.139/(0.031+0.139))
+nberggle
+```
+
+```{r, include = T, message=F}
+density<-read.table("C:/Users/jguenat/Documents/Paper_Master/Data_final/densities_sp_barriers_bergeri_pondere.txt", header=T, dec=",", sep="\t")
+```
+
+To do so the first thing to do is to put rra and densities in a unique file
+
+```{r}
+dens_rra<- left_join(rra_sp, density, by = c("species_name", "reserve"))
+```
+
+Then I performed a linear regression on these term to test the statistical significance of the relationship between the density and the RRA.
+
+```{r}
+mi<-lm(dens_rra$density~dens_rra$rra)
+summary(mi)
+```
+
+
+```{r, warning=F}
+densi_plot<-ggplot(dens_rra, aes(x=density, y=rra))+ 
+  geom_point(aes(color=(species_name), shape=factor(reserve, labels = c("Yverdon", "Gletterens"))), size =4, alpha=1)+
+  scale_color_manual(values = palette2, "Species")+
+  scale_shape_manual(values= c(19,18), "Location")+
+  stat_smooth(method="lm", se=F, col="black") + 
+  ylim(c(0:1))+ xlim(0,40)+
+  theme_minimal()+ ylab("RRA")+ xlab("Density [n/ha]")+
+  theme(axis.text = element_text(size=11, color = "black"),
+        axis.title.x = element_text(size=12),
+        axis.title.y = element_text(size = 12, vjust = -20), 
+        axis.ticks = element_blank(),
+        legend.text = element_text(size=11, face="italic"),
+        legend.title = element_text(size=12),
+        legend.position = "none")+
+  stat_regline_equation(label.y = 1, label.x =0.01, aes(label = ..eq.label..)) +
+  stat_regline_equation(label.y = 0.90, label.x =0.01, aes(label = ..rr.label..)) + 
+  guides(color = guide_legend(order = 1, keyheight = 1.5, keywidth = 1), 
+         shape = guide_legend(order = 2, keyheight = 1.5, keywidth = 1))
+
+densi_plot
+```
+
+It is also interesting to assess if the RRA is correlated to the number of sampling point where the species were found. 
+
+```{r, include = F}
+
+#We need first to extract the number of point where each sp. were detected using eDNA
+
+data<- read.table("C:/Users/jguenat/Documents/Paper_Master/2022_dataRaw_final/2022_FinalEnv_Batr_scaled.txt", header=T, sep="")
+
+length(data$Bbuf_pres[data$Bbuf_pres==1 & data$Location=="Cheseaux"])
+length(data$Bbuf_pres[data$Bbuf_pres==1 & data$Location=="Glettrens"])
+
+length(data$Harbo_pres[data$Harbo_pres==1 & data$Location=="Cheseaux"])
+length(data$Harbo_pres[data$Harbo_pres==1 & data$Location=="Glettrens"])
+
+length(data$Lvulga_pres[data$Lvulga_pres==1 & data$Location=="Cheseaux"])
+length(data$Lvulga_pres[data$Lvulga_pres==1 & data$Location=="Glettrens"])
+
+length(data$Pridi_pres[data$Pridi_pres==1 & data$Location=="Cheseaux"])
+length(data$Pridi_pres[data$Pridi_pres==1 & data$Location=="Glettrens"])
+
+length(data$Pberg_pres[data$Pberg_pres==1 & data$Location=="Cheseaux"])
+length(data$Pberg_pres[data$Pberg_pres==1 & data$Location=="Glettrens"])
+
+length(data$Rtemp_pres[data$Rtemp_pres==1 & data$Location=="Cheseaux"])
+length(data$Rtemp_pres[data$Rtemp_pres==1 & data$Location=="Glettrens"])
+```
+
+```{r}
+numpoint_plot<-ggplot(dens_rra, aes(x=pres_point, y=rra))+ 
+  geom_point(aes(color=(species_name), shape=factor(reserve, labels = c("Yverdon", "Gletterens"))), size =4, alpha=1)+
+  scale_color_manual(values = palette2, "Species")+
+  scale_shape_manual(values= c(19,18), "Location")+
+  stat_smooth(method="lm", se=F, col="black") + 
+  ylim(c(0:1))+ xlim(0,25)+
+  theme_minimal()+ ylab("RRA")+ xlab("Number of detection points")+
+  theme(axis.text = element_text(size=11, color = "black"),
+        axis.title.x = element_text(size=12),
+        axis.title.y = element_text(size = 12, vjust = 5), 
+        axis.ticks = element_blank(),
+        legend.text = element_text(size=11, face="italic"),
+        legend.title = element_text(size=12),
+        legend.position = "right")+
+  stat_regline_equation(label.y = 1, label.x =0.01, aes(label = ..eq.label..)) +
+  stat_regline_equation(label.y = 0.90, label.x =0.01, aes(label = ..rr.label..)) + 
+  guides(color = guide_legend(order = 1, keyheight = 1.5, keywidth = 1), 
+         shape = guide_legend(order = 2, keyheight = 1.5, keywidth = 1))
+
+numpoint_plot
+```
+
+Then we statistically determine the relationship between the number of point where the spe. was detected and its rra. 
+
+```{r}
+ptdetec<-lm(dens_rra$pres_point~dens_rra$rra)
+
+summary(ptdetec)
+```
+
+## Figure 2
+
+To produce the fig. 2 of the manuscript, I combined the four plots above. 
+
+```{r, warning=F}
+fig2<-(barplot_class + barplot_sp)/(densi_plot + numpoint_plot) + plot_layout(guides ='collect')# package patchwork
+
+fig2_final<-fig2 + plot_annotation(tag_levels = 'A') & 
+  theme(plot.tag = element_text(size = 12), 
+        legend.spacing = unit(.5, "cm"), 
+        legend.spacing.x = unit(0.5, "cm"))
+
+fig2_final
+```
+
+## Surface covered by the eDNA sampling
+
+Since there is no relationship between RRA and estimated densities of the local amphibian species, I wanted to point out that the sampled surface using eDNA was largely smaller than the total surface of each reserve. Also the eDNA survey was not meant to monitor the density of each species, but rather investigate where these species occur. 
+
+So I wanted to compute the surface covered by the eDNA survey: A sampling point represents a circle of 5m diameter. The surface of a point is equal to pi* (rayon)^2  
+
+```{r, warning=F}
+surface <- pi*(2.5)^2
+
+round(surface, 2)
+```
+
+We have 25 sampling point per reserve: 
+
+```{r}
+19.63*25# m^2
+```
+
+# Environmental data selection
+
+We recorded 13 environmental variable to caracterize the amphibian habitat. However, we only have 50 sampling points and thus for further analyses we need to select the five most relevant variables. To do so, I performed a correlation plot to have an overview of the redunduncy of the variable and then selected among the least correlated variable, the most biologically relevant. 
+
+```{r, warning=F}
+env<-read.table("C:/Users/jguenat/Documents/Paper_Master/2022_dataRaw_final/Env_data/final_env_Dec20.txt", header=T)
+env<-as_tibble(env)
+
+env.corr<-cor(env[,c(5:7, 9:18)])
+corrplot(env.corr)
+PCA(env[,c(5:7, 9:18)])
+```
+
+Since there is a lot of variable, I decided to remove the proportion of each vegetation type. 
+
+```{r}
+env1.corr<-cor(env[, c(5:7, 9:11, 16:18)])
+corrplot(env1.corr)
+```
+
+Then, I'll check the continuous variables: 
+
+```{r}
+env1<-env[, c(5:7, 9:11, 16:18)]
+as.tibble(env1)
+
+continuous<-select_if(env1, is.numeric)
+summary(continuous)# not same scale --> rescaling
+
+#standardize the numeric variables: 
+
+env_scales<-env1 %>% mutate_if(is.numeric, funs(as.numeric(scale(.))))
+head(env_scales)
+
+```
+
+
+```{r, warning=F}
+PCA(env_scales)
+par(mfrow=c(3,3))
+hist(env_scales$X1_submerg, breaks = 30)
+hist(env_scales$X1_emerg, breaks = 30)
+hist(env_scales$X1_emerg_Land, breaks = 30)
+hist(env_scales$mean.water, breaks = 30)
+hist(env_scales$mean.mud, breaks = 30)
+hist(env_scales$forest.dist, breaks = 30)
+hist(env_scales$MeanTemp, breaks = 30)
+hist(env_scales$MinTemp, breaks = 30)
+hist(env_scales$MaxTemp, breaks = 30)
+
+par(mfrow=c(3,3))
+plot(env_scales$X1_submerg, breaks = 30)
+plot(env_scales$X1_emerg, breaks = 30)
+plot(env_scales$X1_emerg_Land, breaks = 30)
+plot(env_scales$mean.water, breaks = 30)
+plot(env_scales$mean.mud, breaks = 30)
+plot(env_scales$forest.dist, breaks = 30)
+plot(env_scales$MeanTemp, breaks = 30)
+plot(env_scales$MinTemp, breaks = 30)
+plot(env_scales$MaxTemp, breaks = 30)
+
+pairs(env_scales)
+```
+
+From this I decided to reject Mean water depth, since it is quite correlated to the vegetation as well as the temperature. Moreover it is not necessarily biologically interesting. Indeed, water depth will determine the temperature but also the predation risk (as the more depths the more fishes) but I don't have any other data to support this, so it is not interesting in my point of view.
+
+I'll keep the distance to the wintering habitats (estimation of the dispersion ability of sp.) and the mud depth (since important for the wintering habitat of Pelophylax sp. + spots for hunt or hind of sp.).
+
+To determine which other environmental variables I'll use, I did a last corr plot: 
+
+```{r}
+env2.corr<-cor(env_scales)
+corrplot(env2.corr)
+PCA(env_scales)
+```
+
+I decided to keep: (1) Distance to the wintering habitat; (2) mud depth; (3) mean Water T°C; (4) proportion of emerged vegetation; (5) proportion of submerged vegetation; (6) proportion of emerged land. 
+ 
+
+```{r}
+env.reduced<-env[, c(1:7, 10:11, 16)]
+
+##write.table(env.reduced,"C:/Users/jguenat/Documents/Paper_Master/2022_dataRaw_final/Env_data/2022final_envreduced.txt" ,row.names = F)
+
+env.reduced$points<-as.character(env.reduced$points)
+env.scaled<-env.reduced %>% mutate_if(is.numeric, funs(as.numeric(scale(.))))
+
+##write.table(env.scaled,"C:/Users/jguenat/Documents/Paper_Master/2022_dataRaw_final/Env_data/2022final_envreduced_scaled.txt" ,row.names = F)
+
+```
+
+
+## Final Dataset
+
+In order to analyse the effect of environmental factors on the probability of presence of amphibians sp., we first needed to combine the dataset with Pres_Abs of each species with the environmental variables dataset.
+
+```{r}
+env<-read.table("C:/Users/jguenat/Documents/Paper_Master/2022_dataRaw_final/Env_data/2022final_envreduced.txt", header=T)
+env<-as_tibble(env)
+
+#scaled: 
+env2<-read.table("C:/Users/jguenat/Documents/Paper_Master/2022_dataRaw_final/Env_data/2022final_envreduced_scaled.txt", header=T)
+env2<-as_tibble(env2)
+
+batr<-read.table("C:/Users/jguenat/Documents/Paper_Master/2022_dataRaw_final/8_Batr_presabs.txt", header=T,sep="\t", check.names = F)
+batr<-as_tibble(batr)
+
+batr1<-batr %>% select(species_name, 11:60) %>%
+  pivot_longer(2:51, names_to="points", values_to="presabs")
+
+env$points<-as.character(env$points)
+evabund<-left_join(env, batr1, by="points")
+
+#scaled: 
+env2$points<-as.character(env2$points)
+evabund2<-left_join(env2, batr1, by="points")
+
+#For convenience for further analyses, I will put each species as a column instead of in line: 
+
+dat1<-evabund2
+
+bbufo<- dat1[dat1$species_name=="Bufo bufo",]
+b<-bbufo %>% select(points, presabs) %>%
+  rename(Bbuf_pres=presabs)
+
+dat1<-right_join(dat1, b)
+
+Harbo<- dat1[dat1$species_name=="Hyla arborea",]
+h<-Harbo %>% select(points, presabs) %>%
+  rename(Harbo_pres=presabs)
+
+dat1<-right_join(dat1, h)
+
+Lvulga<- dat1[dat1$species_name=="Lissotriton vulgaris",]
+L<-Lvulga %>% select(points, presabs) %>% 
+  rename(Lvulga_pres=presabs)
+
+dat1<-right_join(dat1, L)
+
+Pridi<- dat1[dat1$species_name=="Pelophylax ridibundus",]
+P<-Pridi %>% select(points, presabs) %>% 
+  rename(Pridi_pres=presabs)
+dat1<-right_join(dat1, P)
+
+Pberg<- dat1[dat1$species_name=="Pelophylax bergeri",]
+pb<-Pberg %>% select(points, presabs) %>% 
+  rename(Pberg_pres=presabs)
+dat1<-right_join(dat1, pb)
+
+Rtempo<- dat1[dat1$species_name=="Rana temporaria",]
+R<- Rtempo %>% select(points, presabs) %>% 
+  rename(Rtemp_pres=presabs)
+dat1<-right_join(dat1, R)
+View(dat1)
+
+x<- dat1 %>% select(!c(species_name, presabs)) %>% distinct()
+View(x)
+
+##write.table(x,"C:/Users/jguenat/Documents/Paper_Master/2022_dataRaw_final/2022_FinalEnv_Batr_scaled.txt", row.names = F)
+
+```
+
+# Statistical analyses 
+
+```{r}
+data<- read.table("C:/Users/jguenat/Documents/Paper_Master/2022_dataRaw_final/2022_FinalEnv_Batr_scaled.txt", header=T, sep="")
+```
+
+## Mantel test 
+
+We checked if sampling points located close to each other tended to have more similar species assemblies to determine whether the species were distributed randomly or aggregated in some areas. We performed a Mantel test between a geographic distance matrix and a species assemblage dissimilarity matrix.
+
+```{r}
+dist<-read.csv("C:/Users/jguenat/Documents/Paper_Master/final_samppoint2021_attributetable.csv", sep=",")
+dist<-as_tibble(dist)
+dist<- dist %>% rename(points=numero)
+```
+
+In my data I have 2 time 247, but we can differentiate them with the A and B. So need to change 247B by 248 to make it coherent with the rest of the dataset. 
+
+```{r}
+dist$points[dist$fid==178]<-248
+```
+
+```{r}
+mant <- left_join(data, dist, by="points")
+
+#identify which line correspond to 0, since "you have empty rows: their dissimilarities may be meaningless in method �jaccard�missing values in results": 
+z<-which(rowSums(mant[,11:16])==0)
+length(z)# it represent 10% of my sampling point + it is interesting 
+z
+
+#removing 0: 
+mant1<-mant[-c(5:7, 16, 18),]
+
+points.dist<- vegdist(scale(mant1[,20:21]), "euclid")
+
+sp.dist <- vegdist(mant1[,11:16], method = "jaccard", binary = T)
+
+mantel(points.dist, sp.dist, permutations = 999)
+
+```
+
+Since the absence of all species is also an interesting information and that the number of points for which none of the species were present represent 10%, instead of removing all the empty lines, I replace the 0 by 0.0001 in the matrix. 
+
+```{r}
+
+points.dist<- vegdist(scale(mant[,20:21]), "euclid")
+
+sp.dist <- vegdist(mant[,11:16]+0.001, method = "jaccard")
+
+mantel(points.dist, sp.dist, permutations = 999)
+
+```
+
+## db-RDA replacing 0 by 0.001
+
+We asked if the species assembly could be explained by the habitat characteristics proxied by the environmental variables we measured. We performed a distance-based redundancy analysis. 
+
+I wanted to have a first look at how the proportion of emerged, submerged vegetation and emerged land affect the species assembly, to determine if these variables are all important ones. 
+
+```{r}
+dat<-data
+
+#dat[dat == 0]<- 0.001
+
+sp=dat[,11:16]
+sp001<- sp + 0.001
+env=dat[,5:10]
+
+#sp.dist001<-vegdist(sp001, method = "jaccard")
+
+colnames(sp)<-c("Bb","Ha","Lv","Pr","Pb","Rt")
+colnames(sp001)<-c("Bb","Ha","Lv","Pr","Pb","Rt")
+colnames(env)<-c("SV", "EV", "EL", "MD", "FD", "WT")
+
+rankindex(env, sp001, indices = c("jaccard", "bray"), stepacross= FALSE, method = "spearman")
+
+#Capscale function from vegan package 
+
+dbRDA = capscale(sp001 ~ SV + EV + EL + MD + FD + WT,
+                 env, dist="jaccard")
+
+summary(dbRDA)
+RsquareAdj(dbRDA)
+```
+
+Since the relation  between the probability of presences of species and the environmental factors composing their habitat might not be linear (i.e. species might have an unimodal distribution, with an optimum and some tolerance  to the variation), we tested the effect on the model of the addition of quadratic terms of all environmental variables. 
+We used the polyvar() function proposed in "Numerical Ecology with R" from Bocard, Gillet & Legendre (2018). 
+
+```{r, include = F}
+polyvars <- function(X, degr = 2, raw = FALSE) 
+{
+
+# A function computing polynomials of vectors within a matrix.
+# Contrary to function poly() on which it is based, this function 
+# only computes polynomials separately for each vector of the provided matrix,
+# e.g. x, x^2, x^3, and not combinations such as xy, x^2y and so on.
+#
+# Author: Daniel Borcard, December 2014, March 2017
+# License: GPL2
+#
+# Usage
+# -----
+# polymatrix(X = rawdatamatrix, degr = 3, raw = FALSE)
+#
+# Arguments
+# ---------
+#    X: a matrix or data frame containing quantitative variables
+#
+#    degr: the degree to which the variables must be raised. Default: 2
+#
+#    raw: logical; if TRUE raw polynomials are computed directly from 
+#         the raw variables. If FALSE (default), orthogonal polynomials 
+#         are computed.
+#
+# Value
+# -----
+# A data frame containing the polynomials. In the output matrix, each
+# variable appears in turn, followed by its polynomial terms, e.g.
+# v1, v2_square, v2, v2_square, and so on.
+#
+# Details
+# -------
+# When raw = FALSE, the function computes orthogonal polynomial terms 
+# of each variable separately. This means that in the resulting matrix
+# the polynomial terms of each variable are orthogonal, but that they
+# are not orthogonal to the terms of the other variables.
+
+class.verif <- apply(X, 2, class)
+if (any(class.verif == "factor") | any(class.verif == "character") == TRUE)
+stop("No factor or character variables allowed.", call. = FALSE)
+
+## Store or assign variable names
+if(!is.null(colnames(X)))
+{
+   var.names <- colnames(X)
+}
+else
+{
+   var.names <- paste("v", 1 : ncol(X), sep = "")
+}
+
+## Compute polynomial terms
+X.poly <- matrix(0, nrow(X), ncol(X) * degr)
+for(i in 0: (ncol(X) - 1)) 
+{
+   toto <- poly(X[, (i + 1)], degr, raw=raw)
+   X.poly[,(i * degr + 1) : ((i + 1) * degr)] <- toto
+ }
+                         
+if((ncol(X) * degr) > (nrow(X) - 1) ) 
+{
+cat("\n------------------------------------------------------------------")
+cat("\nWARNING: the number of polynomial terms is equal to or larger than")
+cat("\nthe number of observations.")
+cat("\n------------------------------------------------------------------\n")
+}
+
+## Create new column names
+indices <- rep(1 : degr, ncol(X))
+tmp <- vector(length = ncol(X.poly))
+for(j in 1 : ncol(X))
+{
+   tmp[(j * degr - degr + 1) : (j * degr)] <- rep(var.names[j], degr)
+}
+var.poly <- paste(tmp, indices, sep = ".")
+colnames(X.poly) <- var.poly
+
+X.poly.df <- as.data.frame(X.poly)
+
+X.poly.df
+
+}
+
+
+## Examples
+
+## Construction of a fictitious matrix of 5 observations and 4 variables:
+# env <- matrix(1:20, 5)
+
+## Computation of orthogonal polynomials of degree 3:
+# env.ortho.deg3 <- polymatrix(env, degr = 3)
+
+## Computation of a matrix of raw polynomials of degree 4:
+# env.raw.deg4 <- polymatrix(env, degr = 4, raw = TRUE)
+
+```
+
+
+```{r}
+# adding the quadratic effect of environmental variables: 
+env.square<- polyvars(env, degr = 2)
+
+rankindex(env.square, sp001, indices = c("jaccard", "bray"), stepacross= FALSE, method = "spearman")
+
+dbRDA.square<- capscale(sp001 ~ ., env.square, distance = "jaccard")
+summary(dbRDA.square)
+RsquareAdj(dbRDA.square)
+
+```
+
+The adjusted R.squared is way better with the quadratic effect of the environmental variables, thus we decided to keep them. 
+
+### Ordination plot of db-RDA
+
+First, the triplot for the db-RDA without quadratic effect: 
+
+```{r}
+shapes = c(22, 23, 24) 
+shapes <- shapes[as.factor(dat$environment)]
+
+colors <- c("red", "darkgreen", "blue")
+colors <- colors[as.factor(dat$environment)]
+
+Names = paste("N", 1:4, sep=" = ")
+
+plot(dbRDA, type= "n", scaling = 3, las=1)
+points(dbRDA, display = "species", pch=20, cex = 1.5, col="#ff7f00", scaling=3)
+text(dbRDA, display = "species", scaling= 3, labels = colnames(sp), cex=0.8, pos= 3)
+points(dbRDA, display = "sites", pch= shapes, cex= 1.2, col= colors, scaling=3)
+text(dbRDA, scaling= 3, display="bp", col="#0868ac", cex= 0.8)
+
+"#0868ac"
+
+# Legend
+legend("topright", legend = levels(as.factor(dat$environment)),
+ col = c("red", "darkgreen", "blue"),
+ pch = c(22, 23, 24) )
+
+```
+
+### Significance of db-RDA
+
+We tested whether the influences of the environmental variables on the species assemblage were significant by performing a permanova (i.e., permutational multivariate analysis of variance) using the function adonis2 from the package ‘vegan’.
+
+```{r}
+#PERMANOVA!!!! 
+adonis2(sp001 ~ SV + EV + EL + MD + FD + WT,
+        env, dist="jaccard", permutations = 999)
+
+anova(dbRDA, permutations=how(nperm = 999))
+```
+
+```{r}
+#with quadratic effect
+anova(dbRDA.square, permutations=how(nperm = 999))
+
+adonis2(sp001 ~ .,
+        env.square, dist="jaccard", permutations = 999)
+
+```
+
+##RDA
+
+```{r}
+dat<-data
+
+sp=dat[,11:16]
+sp001<- sp + 0.001
+env=dat[,5:10]
+
+colnames(sp)<-c("Bb","Ha","Lv","Pr","Pb","Rt")
+colnames(sp001)<-c("Bb","Ha","Lv","Pr","Pb","Rt")
+colnames(env)<-c("SV", "EV", "EL", "MD", "FD", "WT")
+
+#RDA function from vegan package 
+
+RDA = rda(sp001 ~ SV + EV + EL + MD + FD + WT,
+                 env)
+summary(RDA)
+RsquareAdj(RDA)
+
+# adding the quadratic effect of environmental variables: 
+
+env.square<- polyvars(env, degr = 2)
+RDA.square<- rda(sp001 ~ ., env.square)
+summary(RDA.square)
+RsquareAdj(RDA.square)
+
+```
+
+
+## Generalized Linear Models 
+
+We aimed at characterizing the breeding habitat of each of the local amphibian species. To this end, we tested the effect of the recorded environmental variables on the probability of presence of each amphibian species. We performed separate binomial generalized linear models (GLMs) for each species, using the presence-absence of the focal species as response variable and the environmental variables as explanatory variables.
+
+based on the graphs chunk 45, we can observe that the distribution of points does not have a linear pattern. Thus, I'll add the quadratic effect of these variables in the following models. 
+
+### Bufo bufo 
+
+```{r}
+length(data$points[data$Bbuf_pres==1])
+```
+
+We wanted to analyze the effect of other amphibians species on the probability of presence of the focal sp. Since there is 5 other species and that we are already testing 6 environmental variable, we would end with 11 explanatory variable that is way too much for 50 sampling points. What we did then, is to first do a PCA on the presence of other amphibian sp and then use this as an explanatory variable in the model. 
+
+```{r}
+pcaB<-prcomp(data[,c(12:16)])
+pcaB
+str(pcaB)
+PCA(data[,c(12:16)])
+
+pcaB$x[,1]#is what we use as explanatory variable. 
+
+```
+```{r}
+#with PC1 as explanatory variable: 
+
+Bbsp<-glm(data$Bbuf_pres ~ pcaB$x[,1], family = "binomial")
+testZeroInflation(simulateResiduals(Bbsp))
+simulateResiduals(Bbsp, plot=T)
+summary(Bbsp)
+
+Bb<-glm(data$Bbuf_pres~ data$X1_submerg + data$X1_emerg + data$X1_emerg_Land + data$mean.mud + data$forest.dist + data$MeanTemp + pcaB$x[,1], family = "binomial")
+testZeroInflation(simulateResiduals(Bb))
+simulateResiduals(Bb, plot=T)
+drop1(Bb)# PCO1 --> other sp. does not explain the probability of presence of B. bufo. 
+
+```
+
+
+```{r}
+
+Bb<-glm(Bbuf_pres~ X1_submerg + X1_emerg + X1_emerg_Land +
+          mean.mud + forest.dist + MeanTemp, data, family = "binomial")
+testZeroInflation(simulateResiduals(Bb))
+simulateResiduals(Bb, plot=T)
+drop1(Bb)# Mean_Temp
+
+Bb1<-glm(Bbuf_pres~ X1_submerg + X1_emerg + X1_emerg_Land +
+          mean.mud + forest.dist, 
+        data, family = "binomial")
+simulateResiduals(Bb1, plot=T)
+drop1(Bb1)# forest.dist 
+
+Bb2<-glm(Bbuf_pres~ X1_submerg + X1_emerg + X1_emerg_Land +
+          mean.mud, 
+        data, family = "binomial")
+simulateResiduals(Bb2, plot=T)
+drop1(Bb2)#submerg
+
+Bb3<-glm(Bbuf_pres~ X1_emerg + X1_emerg_Land +
+          mean.mud, 
+        data, family = "binomial")
+simulateResiduals(Bb3, plot=T)
+drop1(Bb3)#emerg 
+summary(Bb3) # best model since without emerg and emerg_Land Quant dev is observed.
+
+# None of the environemental variable affect probability of presence of Bufo bufo. 
+```
+
+Now, we need to represent it graphically: 
+
+```{r}
+summ(Bb3)
+
+
+plot_summs(Bb3, colors = "#9E6969", point.size = 1, inner_ci_level = .95)
+
+```
+
+to be able to plot all the species on the same graph, we need to extract the coeff and se of each model. using the following function.
+
+```{r}
+sumbb<-summary(Bb3)
+coef<-sumbb$coefficients[,1:2]
+dfcoef<-as.data.frame(coef)
+dfcoef$variable<-row.names(dfcoef)
+dfcoef$species_name<-"Bufo bufo"
+
+coefBB<-dfcoef
+
+```
+
+
+### Hyla arborea 
+
+```{r}
+length(data$points[data$Harbo_pres==1])
+```
+
+PCA: 
+
+```{r}
+pcaH<-prcomp(data[,c(11,13:16)])
+pcaH
+str(pcaH)
+PCA(data[,c(11, 13:16)])
+
+pcaH$x[,1]#is what we use as explanatory variable. 
+
+```
+
+```{r}
+Hasp<-glm(data$Harbo_pres ~ pcaH$x[,1], family = "binomial")
+simulateResiduals(Hasp, plot=T)
+summary(Hasp)
+
+Ha<-glm(data$Harbo_pres~data$X1_submerg + 
+          data$X1_emerg + 
+          data$mean.mud + 
+          data$forest.dist  + I(data$forest.dist^2)+
+          data$MeanTemp + pcaH$x[,1], family = "binomial")
+simulateResiduals(Ha, plot=T)
+testZeroInflation(simulateResiduals(Ha))
+summary(Ha)
+drop1(Ha)# l'algorithme ne converge pas --> no matter the variable I try to remove. Cannot say anything about how the other sp. affect the proba of presence of H. arborea.  
+```
+
+
+```{r}
+
+Ha<-glm(Harbo_pres~X1_submerg + 
+          X1_emerg + 
+          mean.mud + 
+          forest.dist  + I(forest.dist^2)+
+          MeanTemp, data, family = "binomial")
+simulateResiduals(Ha, plot=T)
+testZeroInflation(simulateResiduals(Ha))
+summary(Ha)
+drop1(Ha)#submerged
+
+Ha1<-glm(Harbo_pres~ X1_emerg + 
+          mean.mud + 
+          forest.dist  + I(forest.dist^2)+
+          MeanTemp, data, family = "binomial")
+simulateResiduals(Ha1, plot=T)
+drop1(Ha1)#mean.mud
+
+Ha2<-glm(Harbo_pres~ X1_emerg + 
+          forest.dist  + I(forest.dist^2)+
+          MeanTemp, data, family = "binomial")
+simulateResiduals(Ha2, plot=T)
+drop1(Ha2)#temp
+
+Ha3<-glm(Harbo_pres~ X1_emerg + 
+          forest.dist  + I(forest.dist^2), 
+         data, family = "binomial")
+simulateResiduals(Ha3, plot=T)
+drop1(Ha3)# forest
+
+summary(Ha3)# best model since without forest dist Quant dev is observed.
+
+#hyla arbo tends to be affected by proportion of emerged vegetation. 
+
+```
+Graphic representaiton
+
+```{r}
+summ(Ha3)
+
+plot_summs(Ha3, inner_ci_level = .95, colors = "black", plot.distributions = T)
+```
+
+```{r}
+sumbb<-summary(Ha3)
+coef<-sumbb$coefficients[,1:2]
+dfcoef<-as.data.frame(coef)
+dfcoef$variable<-row.names(dfcoef)
+dfcoef$species_name<-"Hyla arborea"
+
+coefHA<-dfcoef
+
+coef_final<- full_join(coefBB, coefHA)
+
+```
+
+```{r}
+# with squared effect: 
+
+Names = paste("N", 1:4, sep=" = ")
+
+plot(dbRDA.square, type= "n", scaling = 2, las=1, xlab = "CAP 1 (12.77%)", ylab= "CAP 2 (8.04%)", ylim = c(-2.5, 2.5), xlim = c(-4, 4))
+points(dbRDA.square, display = "species", pch=19, cex = 1.5, col=palette2, scaling=3)
+text(dbRDA.square, display = "species", scaling= 3, labels = colnames(sp), cex=0.8, pos= 2)
+points(dbRDA.square, display = "sites", pch = 20, cex= 1, col= "black", scaling=3)
+text(dbRDA.square, scaling= 3, display="bp", col="#0868ac", cex= 0.8)
+```
+
+
+### Lissotriton vulgaris
+
+```{r}
+length(data$points[data$Lvulga_pres==1])
+```
+
+PCA
+
+```{r}
+pcaL<-prcomp(data[,c(11:12,14:16)])
+pcaL
+str(pcaL)
+PCA(data[,c(11:12, 14:16)])
+
+pcaL$x[,1]
+```
+
+```{r}
+Lvsp<-glm(data$Lvulga_pres ~ pcaL$x[,1], family = "binomial")
+simulateResiduals(Lvsp, plot=T)
+summary(Lvsp)
+
+
+Lv<-glm(data$Lvulga_pres~data$X1_submerg + data$X1_emerg + data$X1_emerg_Land +
+          data$mean.mud + data$forest.dist + data$MeanTemp + pcaL$x[,1], family = "binomial")
+simulateResiduals(Lv, plot=T)
+testZeroInflation(simulateResiduals(Lv))
+summary(Lv)
+drop1(Lv)# mean.mud
+
+Lv1<-glm(data$Lvulga_pres~data$X1_submerg + data$X1_emerg + data$X1_emerg_Land +data$forest.dist + data$MeanTemp + pcaL$x[,1], family = "binomial")
+simulateResiduals(Lv1, plot=T)
+drop1(Lv1)#submerg
+
+Lv2<-glm(data$Lvulga_pres~data$X1_emerg + data$X1_emerg_Land +data$forest.dist + data$MeanTemp + pcaL$x[,1], family = "binomial")
+simulateResiduals(Lv2, plot=T)
+drop1(Lv2)# pca
+
+Lv3<-glm(data$Lvulga_pres~data$X1_emerg + data$X1_emerg_Land +data$forest.dist + data$MeanTemp, family = "binomial")
+simulateResiduals(Lv3, plot=T)
+drop1(Lv3)# best model --> sp. does not affect the probability of presence of L. vulgaris. 
+
+summary(Lv3)
+```
+
+```{r}
+Lv<-glm(Lvulga_pres~X1_submerg + X1_emerg + X1_emerg_Land +
+          mean.mud + forest.dist + MeanTemp, 
+        data, family = "binomial")
+simulateResiduals(Lv, plot=T)
+testZeroInflation(simulateResiduals(Lv))
+drop1(Lv)#mean.mud
+
+Lv1<-glm(Lvulga_pres~X1_submerg + X1_emerg + X1_emerg_Land +
+          forest.dist + MeanTemp, 
+        data, family = "binomial")
+simulateResiduals(Lv, plot=T)
+drop1(Lv1)#submerg
+
+Lv2<-glm(Lvulga_pres~X1_emerg + X1_emerg_Land +
+          forest.dist + MeanTemp, 
+        data, family = "binomial")
+simulateResiduals(Lv2, plot=T)
+drop1(Lv2)# best model 
+
+summary(Lv2)
+
+#L. vulgaris tends to be affect by the dist to the wintering habitats. 
+
+```
+
+Graphical representation: 
+
+```{r}
+summ(Lv2)
+
+plot_summs(Lv2, inner_ci_level = .95, colors = "black", plot.distributions = T)
+```
+
+```{r}
+sumbb<-summary(Lv2)
+coef<-sumbb$coefficients[,1:2]
+dfcoef<-as.data.frame(coef)
+dfcoef$variable<-row.names(dfcoef)
+dfcoef$species_name<-"Lissotriton vulgaris"
+
+coefLv<-dfcoef
+
+coef_final<- full_join(coef_final, coefLv)
+
+```
+
+### Pelophylax ridibundus
+
+```{r}
+length(data$points[data$Pridi_pres==1])
+```
+
+PCA
+
+```{r}
+pcaPr<-prcomp(data[,c(11:13,15:16)])
+pcaPr
+str(pcaPr)
+PCA(data[,c(11:13, 15:16)])
+
+pcaPr$x[,1]
+```
+
+```{r}
+Prsp<-glm(data$Pridi_pres~ pcaPr$x[,1], family = "binomial")
+simulateResiduals(Prsp, plot=T)
+summary(Prsp)
+
+Pr<-glm(Pridi_pres~X1_emerg + 
+          X1_emerg_Land + 
+          mean.mud + I(mean.mud^2) + 
+          forest.dist  +   
+          MeanTemp + pcaPr$x[,1], data, family = "binomial")
+simulateResiduals(Pr, plot=T)
+testZeroInflation(simulateResiduals(Pr))
+drop1(Pr)#emerged vegetation
+
+Pr1<-glm(Pridi_pres~X1_emerg_Land + 
+          mean.mud + I(mean.mud^2) + 
+          forest.dist  +   
+          MeanTemp + pcaPr$x[,1], data, family = "binomial")
+simulateResiduals(Pr1, plot=T)
+drop1(Pr1)#forest dist
+
+Pr2<-glm(Pridi_pres~X1_emerg_Land + 
+          mean.mud + I(mean.mud^2) +    
+          MeanTemp + pcaPr$x[,1], data, family = "binomial")
+simulateResiduals(Pr2, plot=T)
+drop1(Pr2)#Mean temp
+
+Pr3<-glm(Pridi_pres~X1_emerg_Land + 
+          mean.mud + I(mean.mud^2) + 
+           pcaPr$x[,1], data, family = "binomial")
+simulateResiduals(Pr3, plot=T)
+drop1(Pr3)#emerg land
+
+summary(Pr3)
+
+Pr4<-glm(Pridi_pres~X1_emerg_Land + mean.mud + I(mean.mud^2), data, family = "binomial")
+simulateResiduals(Pr4, plot=T)#model not converging. 
+drop1(Pr4)
+
+```
+
+```{r}
+summ(Pr3)
+
+plot_summs(Pr3, inner_ci_level = .95, colors = "Black", plot.distributions = T)
+
+```
+
+```{r}
+sumbb<-summary(Pr3)
+coef<-sumbb$coefficients[,1:2]
+dfcoef<-as.data.frame(coef)
+dfcoef$variable<-row.names(dfcoef)
+dfcoef$species_name<-"Pelophylax ridibundus"
+
+coefPr<-dfcoef
+
+coef_final<- full_join(coef_final, coefPr)
+
+```
+
+### Pelophylax bergeri
+
+```{r}
+length(data$points[data$Pberg_pres==1])
+```
+
+PCA
+
+```{r}
+pcaPb<-prcomp(data[,c(11:14,16)])
+pcaPb
+str(pcaPb)
+PCA(data[,c(11:14,16)])
+
+pcaPb$x[,1]
+```
+
+```{r}
+Pbsp<-glm(Pberg_pres ~ pcaPb$x[,1], data, family = "binomial")
+simulateResiduals(Pbsp, plot=T)
+summary(Pbsp)
+
+Pb<-glm(Pberg_pres~X1_submerg + X1_emerg + X1_emerg_Land + mean.mud + forest.dist +  MeanTemp + pcaPb$x[,1], 
+        data, family = "binomial")
+simulateResiduals(Pb, plot=T)
+testZeroInflation(simulateResiduals(Pb))
+drop1(Pb) # MeanTemp
+
+Pb1<-glm(Pberg_pres~X1_submerg + X1_emerg + X1_emerg_Land + mean.mud + forest.dist  + pcaPb$x[,1], 
+        data, family = "binomial")
+simulateResiduals(Pb1, plot=T)
+drop1(Pb1) # emerg Land
+
+Pb2<-glm(Pberg_pres~X1_submerg + X1_emerg + mean.mud + forest.dist  + pcaPb$x[,1], 
+        data, family = "binomial")
+simulateResiduals(Pb2, plot=T)
+drop1(Pb2) # submerged
+
+Pb3<-glm(Pberg_pres~X1_emerg + mean.mud + forest.dist  + pcaPb$x[,1], 
+        data, family = "binomial")
+simulateResiduals(Pb3, plot=T)
+drop1(Pb3) # forst.dist
+
+Pb4<-glm(Pberg_pres~X1_emerg + mean.mud + pcaPb$x[,1], 
+        data, family = "binomial")
+simulateResiduals(Pb4, plot=T)
+drop1(Pb4)# bestmodel
+
+summary(Pb4)
+
+```
+
+```{r}
+summ(Pb4)
+
+plot_summs(Pb4, inner_ci_level = .9, colors =  "black", plot.distributions = T)
+```
+
+```{r}
+sumbb<-summary(Pb4)
+coef<-sumbb$coefficients[,1:2]
+dfcoef<-as.data.frame(coef)
+dfcoef$variable<-row.names(dfcoef)
+dfcoef$species_name<-"Pelophylax bergeri"
+
+coefPb<-dfcoef
+
+coef_final<- full_join(coef_final, coefPb)
+
+```
+
+### Rana temporaria
+
+```{r}
+length(data$points[data$Rtemp_pres==1])
+```
+PCA
+
+```{r}
+pcaRt<-prcomp(data[,c(11:15)])
+pcaRt
+str(pcaRt)
+PCA(data[,c(11:15)])
+
+pcaRt$x[,1]
+```
+
+```{r}
+Rtsp<- glm(Rtemp_pres~ pcaRt$x[,1], 
+        data, family = "binomial")
+simulateResiduals(Rtsp, plot=T)
+summary(Rtsp)
+
+Rt<-glm(Rtemp_pres~X1_submerg + X1_emerg +  X1_emerg_Land +
+          mean.mud + I(mean.mud^2) + forest.dist + MeanTemp + pcaRt$x[,1], 
+        data, family = "binomial")
+simulateResiduals(Rt, plot=T)
+testZeroInflation(simulateResiduals(Rt))
+drop1(Rt)#submerged 
+
+
+Rt1<-glm(Rtemp_pres~X1_emerg +  X1_emerg_Land +
+          mean.mud + I(mean.mud^2) + forest.dist + MeanTemp + pcaRt$x[,1], 
+        data, family = "binomial")
+simulateResiduals(Rt1, plot=T)
+drop1(Rt1)# emerg
+
+Rt2<-glm(Rtemp_pres~X1_emerg_Land +
+          mean.mud + I(mean.mud^2) + forest.dist + MeanTemp + pcaRt$x[,1], 
+        data, family = "binomial")
+simulateResiduals(Rt2, plot=T)
+drop1(Rt2)# mean temp
+
+Rt3<-glm(Rtemp_pres~X1_emerg_Land +
+          mean.mud + I(mean.mud^2) + forest.dist + pcaRt$x[,1], 
+        data, family = "binomial")
+simulateResiduals(Rt3, plot=T)
+drop1(Rt3)# emerged Land 
+
+Rt4<-glm(Rtemp_pres~mean.mud + I(mean.mud^2) + forest.dist + pcaRt$x[,1], 
+        data, family = "binomial")
+simulateResiduals(Rt4, plot=T)
+drop1(Rt4)# mean mud 
+
+Rt5<-glm(Rtemp_pres~forest.dist + pcaRt$x[,1], 
+        data, family = "binomial")
+simulateResiduals(Rt5, plot=T)
+drop1(Rt5)
+
+summary(Rt5)
+```
+
+```{r}
+summ(Rt5)
+
+plot_summs(Rt5, inner_ci_level = .95, colors = "black", plot.distributions = T)
+```
+
+```{r}
+sumbb<-summary(Rt5)
+coef<-sumbb$coefficients[,1:2]
+dfcoef<-as.data.frame(coef)
+dfcoef$variable<-row.names(dfcoef)
+dfcoef$species_name<-"Rana temporaria"
+
+coefPr<-dfcoef
+
+coef_final<- full_join(coef_final, coefPr)
+
+```
+
+# Figure 4 
+
+```{r}
+fig.4<- ggplot(coef_final, aes(factor(variable, levels = c("(Intercept)", "I(forest.dist^2)", "forest.dist", "I(mean.mud^2)", "mean.mud", "MeanTemp", "X1_emerg", "X1_emerg_Land", "pcaPb$x[, 1]", "pcaPr$x[, 1]", "pcaRt$x[, 1]"), , labels = c("Intercept", "Distance to Forest^2", "Distance to Forest", "Mud Depth^2", "Mud Depth", "Mean T°C", "Emerged Vegetation", "Emerged Land", "PCA P. bergeri", "PCA P. ridibundus", "PCA R. temporaria")), Estimate)) + 
+  geom_hline(yintercept=0, lty=2, lwd=1, colour="black") +
+  geom_errorbar(aes(ymin=Estimate - `Std. Error`, ymax=Estimate + `Std. Error`, colour= (species_name)), lwd=1, width=0) +
+  geom_point(size=3, aes(colour=species_name))+
+  scale_color_manual(values = palette2)+
+  coord_flip() + facet_grid(.~species_name)+
+  guides(colour=FALSE) +
+  labs(x="", y="Estimates") + theme_minimal()+ 
+  theme(strip.text = element_text(face = "italic"))
+fig.4
+```
