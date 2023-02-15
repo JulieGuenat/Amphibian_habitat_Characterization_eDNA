@@ -1,4 +1,4 @@
-# Processing amphibians sequences using OBItools
+  # Curated Version that can be published 2022
 
 ### 1. Cut sequences files
 #Because we have a large amount of sequences (more 180 millions read), we need to split the mother file to run illuminapairedend command
@@ -7,19 +7,17 @@
 # We printed the number of lines contained in the mother file (730'689'392) and divided it by 100 (number of children file we wanted).
 # Then, we created the text file using:
 nano cut_delim.txt
-
 # We changed the seperator, so the file would be line read. (change tab for ;) using:
-
 cat cut_delim.txt | sed 's/\t/;/g' > cut_del.txt  # 's' means separate and 'g' means general
 
 #Then Guillaume Lavanchy created the following loop to split the mother file:
 
-!#/bin/bash/
+  !#/bin/bash/
 
-# takes 3 arguments:
-# 1: a file with three ";"-separated columns as input
-# 2: the file with single reads (R1)
-# 3: the file with paired reads (R2)
+  # takes 3 arguments:
+  # 1: a file with three ";"-separated columns as input
+  # 2: the file with single reads (R1)
+  # 3: the file with paired reads (R2)
 
 for i in $(cat $1)
 do
@@ -38,154 +36,23 @@ for i in $(ls Batra_R1_* | sed 's/Batra_R1_//g' | sed 's/.fq//g'); do bsub <<< "
 
 #The  output is the alignment of the single and paired sequences. Again I created a folder containing all those files named "Batra_illu_pairedend"
 
-### 3. Concatenate all alligned files in one files
-#Once the illuminapairedend command finished to run, we had to combine all files in one uniq file to continue the obitools analysis.
-#To do so I used:
-cat batr_* > batr.all.illu.fq
-
-#To be able to see the distribution of the scores for the batr sequences, I used the following function to have the count for each score
-bsub -n 4 -M 8000000 -J "obistat" 'obistat -c score batr_all_illu.fg > batr_all_illu_scores.txt'
-
-#Then I have to modify the separator of the file to be able to further open it in R. Since it is space separated, but with differential amount f space, I have to cut the file by columns and then past the columns with ";" as delimiter.
-awk '{print $1}' batr_all_illu_scores.txt > col1
-awk '{print $2}' batr_all_illu_scores.txt > col2
-awk '{print $3}' batr_all_illu_scores.txt > col3
-
-paste -d";" col1 col2 > x
-paste -d";" x col3 > batr_all_illu_scores_scsep.txt
-
-
-### 4. Remove unaligned sequences record
-
-nohup obigrep -p 'mode!="joined"' batr.illu.fq > batr_illu_ali.fq &
-# The command above corresponds to the one for all sequences.
-#'mode!="joined"' means that it will remove sequences that are only joined but not aligned.
-#however, Obitools command does not support the nohup function, thus I ran this command with bsub.
-
-#The following commands were run on the splited sequences files:
-#I first tried to remove unaligned sequences using the parameter 'score>50'.
-#for i in $(ls batra_* | sed 's/batra_//g' | sed 's/.fq//g'); do bsub <<< "obigrep -p 'score>50' batra_${i}.fq > batra_${i}_ali.fq"; done
-#However, the threshold is set in an arbitrary manner, and I prefered to remove only sequences that were not alligned (that recieved the joined attribute during the illumina paired end processus)
-
+### 3. Remove unaligned sequences record
 #I performed obigrep by removing joined sequences and not by setting a threshold
 for i in $(ls batra_*.fq | sed 's/batra_//g' | sed 's/.fq//g'); do bsub <<< "obigrep -p 'mode!=\"joined\"' batra_${i}.fq > batra_${i}_ali_rmjoined.fq"; done
 
-#after this step I also concatenate all sequences together to be able to make a second histogramm with the scores distribution.
-bsub -M 8000000 -J "obistat" 'obistat -c score batraALL_ali_rmjoined > batraALL_ali_rmjoined_countscore'
-awk '{print $1}' batraALL_ali_rmjoined_countscore.txt > col1
-awk '{print $2}' batraALL_ali_rmjoined_countscore.txt > col2
-awk '{print $3}' batraALL_ali_rmjoined_countscore.txt > col3
-
-paste -d";" col1 col2 > x
-paste -d";" x col3 > batr_all_illu_scores_scsep.txt
-
-
-### 5. Assign marker/sample combination
-#for sequences selected with an alignment score above 50:
-#for i in $(ls batra_*_ali.fq | sed 's/batra_//g' | sed 's/_ali.fq//g'); do bsub <<< "ngsfilter -t generic_ngsfilter_Batr01.txt -u unidentified_batr01.fq batra_${i}_ali.fq > batra_ali_assigned_${i}.fq"; done
-
+### 4. Assign marker/sample combination
 #for sequences selected with the parameter 'mode!="joined"'
 for i in $(ls batra_* | sed 's/batra_//g' | sed 's/_ali_rmjoined.fq//g'); do bsub <<< "ngsfilter -t generic_ngsfilter_Batr01.txt -u unidentified_Batra.fq batra_${i}_ali_rmjoined.fq > batra_ali_rmjoined_assigned_${i}.fq"; done
 
-# We first needed to concatenated the sequences alligned, selected with "mode!=joined" and assigned to a sample name:
+# We then needed to concatenated the sequences alligned, selected with "mode!=joined" and assigned to a sample name:
 cat batra_ali_rmjoined_assigned_* > batrALL_ali_rmjoined_assigned.fq
-# to be able to visualize the number of reads in function of the sample:
-bsub <<< "obistat -c sample batrALL_ali_rmjoined_assigned.fq"
 
-### 6. DEreplicate reads into uniq sequences
+### 6. Dereplicate reads into uniq sequences
 # Ran the command
 bsub -n 4 -M 16000000 -q "long" -J "obiuniq" 'obiuniq -m sample batrALL_ali_rmjoined_assigned.fq > batrALL_alijoined_assigned_uniq.fq'
 
 
-### 7. Remove singleton
-
-#to have a look at the number of singleton, I used the following command:
-obistat -c count batrALL_alijoined_assigned_uniq.fq | sort -nk1 | head -20
-
-count             count     total
-1                424419    424419
-2                 48963     97926
-3                 22089     66267
-4                 13121     52484
-5                  8912     44560
-6                  6411     38466
-7                  5013     35091
-8                  3934     31472
-9                  3401     30609
-10                 2710     27100
-11                 2383     26213
-12                 2032     24384
-13                 1826     23738
-14                 1614     22596
-15                 1381     20715
-16                 1281     20496
-17                 1140     19380
-18                  977     17586
-19                  973     18487
-
-
-#I first chose to removed uniquely singleton, to be as conservative as possible:
-obigrep -p "count>1" batrALL_alijoined_assigned_uniq.fq > batrALL_alijoined_assigned_uniq_C1.fq
-
-# Following the OBITools tutorial (Wolf data): clean the sequences from PCR/sequencing errors
-#bsub -n 4 -M 16000000 -q "long" -J "Obiclean" 'obiclean -s merged_sample -r 0.05 -H  batrALL_alijoined_assigned_uniq_C1.fq > batrALL_alijoined_assigned_uniq_C1_clean.fq'
-#pas bien d'aggréger les séquences avant de les assigner!
-
-### 8. Matching sequences to ref database
-bsub -n 4 -M 16000000 -q "long" -J "Ecotag" 'ecotag -d ../Vert/embl_last_vert -R Batr_3m_final.fa -m 0.95 batrALL_alijoined_assigned_uniq_C1.fq > batrALL_alijoined_assigned_uniq_C1_tags.fq'
-
-obigrep -p 'taxid!=1' batrALL_alijoined_assigned_uniq_C1_tags.fq | obigrep -p '(best_identity.values())[0]==1' | obistat -c species_name | sort -nk4
-
-None                                  5  47810685
-species_name                        count   total
-Panurus biarmicus                     1      7644
-Pseudacris maculata                   1      9608
-Fringilla coelebs                     1     13241
-Phalacrocorax carbo                   1     42430
-Fulica atra                           1    130896
-Abramis brama                         1    147056
-Perca fluviatilis                     1    415960
-Netta rufina                          1    486105
-Esox lucius                           1    614072
-Rutilus rutilus                       1    647803
-Bufo bufo                             1    783929
-Homo sapiens                         12   1362013
-Pelophylax ridibundus                 1   1783757
-Lepomis gibbosus                      1   1845215
-Rana temporaria                       3   2481399
-Scardinius erythrophthalmus           1   7645316
-Rhodeus amarus                        1   8768630
-Tinca tinca                           1  13992160
-Rana arvalis                          1  32330034
-
-#Retry with the database of Eduard!
-obiconvert -t TAXO --ecopcrdb-output=taxonomy # ../
-bsub -n 4 -M 16000000 -J "Ecotag" 'ecotag -t ../taxonomy -R ref_database/batr01.uniq.fastq -m 0.95 batrALL_alijoined_assigned_uniq_C1.fq > batrALL_alijoined_assigned_uniq_C1_tags_Eduard.fq'
-
-obigrep -p 'taxid!=1' batrALL_alijoined_assigned_uniq_C1_tags_Eduard.fq | obigrep -p '(best_identity.values())[0]==1' | obistat -c species_name | sort -nk4
-
-
-### Adding missing species in the ref_database
-#1. create a header corresponding to : >merged_taxid={70019:1}; species_name=Pelophylax saharicus; family_name=Ranidae; taxid=70019; reverse_match=ACACCGCCCGTCACCCT
-#2. copy past the amplicon in lower-case letter.
-
-### Retry with my restreinte database:
-bsub -n 4 -M 16000000 -q "long" -J "Ecotag" 'ecotag -d ../Vert/embl_last_vert -R ref_database/Batr_3m_final.fa -m 0.95 batrALL_alijoined_assigned_uniq_C1.fq > batrALL_alijoined_assigned_uniq_C1_tags.fq'
-
-### Retry with Eduard databases
-nohup ecotag -d ../TAXOEduard/obiTAXO_17.10.2018 -R ../ref_db_eduard/db_batr01_addsp.fasta -m 0.95 batrALL_alijoined_assigned_uniq_C1.fq > batrALL_alijoined_assigned_uniq_C1_tagsEduard_notrest.fq 2>stdoutEdbatr &
-
-nohup ecotag -d ../TAXOEduard/obiTAXO_17.10.2018 -R ../ref_db_eduard/db_batr01.restr_addsp.fasta -m 0.95 batrALL_alijoined_assigned_uniq_C1.fq > batrALL_alijoined_assigned_uniq_C1inseALL_alijoined_assigned_uniq_C1_tagsEduard_restr.fq 2>stdoutEdbatrRestr95 &
-
-
-"batrALL_alijoined_assigned_uniq_C1.fq.restr.tag" name of the final file file once tag are added
-
-### Remove PCR/sequencing errors
-obiclean -r 0.25 -H batrALL_alijoined_assigned_uniq_C1.fq.restr.tag > batrALL_alijoined_assigned_uniq_C1_restr.tag_clean.fq
-
-
-####### LAST VERSION 2022
-#assignement data base with full db added L. helveticus and P. bergeri
+### 7. assignement data base with full db added L. helveticus and P. bergeri
 
 ecotag -d Vert19/embl_last_vert -R ref_database/db_batr01_addsp.fasta 6_Batr_clean_all.fq > 7_Batr_taxid_asigne.fq
 
