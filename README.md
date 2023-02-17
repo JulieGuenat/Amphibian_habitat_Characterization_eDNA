@@ -53,7 +53,7 @@ File name: OBItools_pipeline.sh
 Description: script obitools (commands and parameter) used to process raw barcode sequences. 
 
 
-File name: P.berg_genbank.txt
+File name: 12S_P.bergeri_seq_682bp.txt
 
 Description: consensus partial sequence of the 12S mitochondrial gene of Pelophylax bergeri. Amplicon amplified with primers L2519 and H3296 (Wang et al. 2017) was then sequenced using Sanger sequencing. 
 
